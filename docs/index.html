@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="stryke-mssql — Microsoft SQL Server client for stryke. Parametrized query/execute, transaction batches, scalar/exists helpers, schema introspection, over tiberius (pure-Rust TDS). Opt-in Rust cdylib.">
+  <title>stryke-mssql — Documentation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&amp;family=Share+Tech+Mono&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="hud-static.css">
+  <link rel="stylesheet" href="tutorial.css">
+  <style>
+    .tutorial-main { max-width: 68rem; }
+    .example-tbl { width: 100%; border-collapse: collapse; margin: 0.6rem 0; font-size: 12.5px; }
+    .example-tbl td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .example-tbl td:first-child { white-space: nowrap; color: var(--accent); font-family: 'Share Tech Mono', ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <div class="tutorial-wrap">
+    <header class="tutorial-header">
+      <div class="tutorial-header-inner">
+        <h1 class="tutorial-brand">// STRYKE-MSSQL &mdash; MICROSOFT SQL SERVER CLIENT FOR STRYKE</h1>
+        <nav class="tutorial-nav">
+          <a href="report.html">Engineering report</a>
+          <a href="https://github.com/MenkeTechnologies/stryke-mssql" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href="https://github.com/MenkeTechnologies/strykelang" target="_blank" rel="noopener noreferrer">strykelang</a>
+          <a href="https://github.com/MenkeTechnologies/MenkeTechnologiesMeta" target="_blank" rel="noopener noreferrer">Meta</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="tutorial-main">
+      <section>
+        <h2>What it is</h2>
+        <p>
+          <code>stryke-mssql</code> is a Microsoft SQL Server / Azure SQL client
+          for <a href="https://github.com/MenkeTechnologies/strykelang" target="_blank" rel="noopener noreferrer">stryke</a>:
+          parametrized query and execute, transaction batches, scalar/exists
+          helpers, and schema introspection — over
+          <a href="https://docs.rs/tiberius" target="_blank" rel="noopener noreferrer">tiberius</a>,
+          the pure-Rust TDS driver. No FreeTDS, no ODBC. The cdylib owns one
+          tokio runtime and presents a blocking facade, caching a client per
+          <code>(host, db, auth, encrypt)</code>.
+        </p>
+      </section>
+
+      <section>
+        <h2>Quick start</h2>
+        <pre><code>use Mssql
+
+var %conn = ( host =&gt; "localhost", database =&gt; "app",
+              username =&gt; "sa", password =&gt; $ENV{MSSQL_PASS}, trust_cert =&gt; 1 )
+
+val @users = Mssql::query("SELECT id, name FROM users WHERE active = @P1", params =&gt; [1], %conn)
+p Mssql::scalar("SELECT COUNT(*) FROM users", %conn)
+
+Mssql::execute("UPDATE users SET name = @P1 WHERE id = @P2", params =&gt; ["Ada", 42], %conn)
+
+Mssql::batch(
+    ["INSERT INTO audit (msg) VALUES ('x')", "UPDATE users SET seen = 1 WHERE id = 42"],
+    %conn,
+)</code></pre>
+      </section>
+
+      <section>
+        <h2>Typed rows</h2>
+        <p>
+          Each cell is converted to JSON by trying the TDS types in order
+          (int, float, bool, string, decimal, uuid, datetime, binary), so
+          arbitrary result sets round-trip without a per-query schema. Decimals
+          keep full precision as strings, binary is base64, and datetimes are
+          ISO-8601.
+        </p>
+      </section>
+
+      <section>
+        <h2>API surface</h2>
+        <table class="example-tbl">
+          <tr><td>Liveness</td><td>version, ping, server_version</td></tr>
+          <tr><td>Query</td><td>query, query_one, scalar, exists, simple_query</td></tr>
+          <tr><td>Write</td><td>execute, batch (transaction)</td></tr>
+          <tr><td>Introspection</td><td>databases, tables, columns</td></tr>
+          <tr><td>URL helpers</td><td>parse_url, redact_url</td></tr>
+        </table>
+        <p>The full API lives in the <a href="https://github.com/MenkeTechnologies/stryke-mssql#readme">README</a>.</p>
+      </section>
+
+      <section>
+        <h2>Package family</h2>
+        <p>Part of the stryke connector family under the <a href="https://github.com/MenkeTechnologies/MenkeTechnologiesMeta" target="_blank" rel="noopener noreferrer">MenkeTechnologiesMeta</a> umbrella:</p>
+        <ul>
+          <li><a href="https://github.com/MenkeTechnologies/stryke-postgres" target="_blank" rel="noopener noreferrer">stryke-postgres</a> — PostgreSQL</li>
+          <li><a href="https://github.com/MenkeTechnologies/stryke-mysql" target="_blank" rel="noopener noreferrer">stryke-mysql</a> — MySQL / MariaDB</li>
+          <li><a href="https://github.com/MenkeTechnologies/stryke-mongo" target="_blank" rel="noopener noreferrer">stryke-mongo</a> — MongoDB</li>
+          <li><a href="https://github.com/MenkeTechnologies/stryke-search" target="_blank" rel="noopener noreferrer">stryke-search</a> — Elasticsearch / OpenSearch</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="tutorial-footer">
+      <p>MIT &middot; MenkeTechnologies</p>
+    </footer>
+  </div>
+  <script src="hud-theme.js"></script>
+</body>
+</html>

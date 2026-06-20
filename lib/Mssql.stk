@@ -1,0 +1,136 @@
+## lib/Mssql.stk — Microsoft SQL Server client for stryke (`use Mssql`).
+##
+## Thin wrapper around the `stryke-mssql` cdylib's `mssql__*` exports. The
+## cdylib is dlopened in-process on first `use Mssql` and registers each export
+## via `rust_ffi::load_cdylib`. Every wrapper builds a JSON args dict, calls the
+## FFI symbol, and parses the JSON return.
+##
+## Transport is `tiberius` (pure-Rust TDS) behind a blocking facade — the cdylib
+## owns one tokio runtime and caches a `Client` per `(host, db, auth, encrypt)`.
+## Parametrized queries use `@P1`, `@P2`, … placeholders bound from `params`.
+
+package Mssql
+
+# ── error dispatch ────────────────────────────────────────────────────
+
+## Decode the JSON from an `mssql__*` FFI call; die on a reported error.
+fn Mssql::_decode ($name, $json) {
+    val $o = from_json $json
+    if (ref $o eq "HASH" && exists $o->{error}) {
+        die "Mssql::$name: $o->{error}"
+    }
+    $o
+}
+
+## Build the request hash: connection params from %opts plus per-op fields.
+## Falls back to $MSSQL_URL (ADO connection string) when no host/url given.
+fn Mssql::_req ($extra, $opts) {
+    var %r = %$extra
+    for val $k (qw(url host port database username password encrypt trust_cert)) {
+        $r{$k} = $opts->{$k} if exists $opts->{$k} && defined $opts->{$k}
+    }
+    if (!exists $r{url} && !exists $r{host} && defined $ENV{MSSQL_URL}) {
+        $r{url} = $ENV{MSSQL_URL}
+    }
+    \%r
+}
+
+# ── version + liveness ────────────────────────────────────────────────
+
+## Package version string.
+fn Mssql::version {
+    Mssql::_decode("version", mssql__version("{}"))->{version}
+}
+
+## Connectivity probe — `SELECT 1`. Returns 1 on success.
+fn Mssql::ping (%opts) {
+    val $r = Mssql::_req({}, \%opts)
+    Mssql::_decode("ping", mssql__ping(to_json($r)))->{value}
+}
+
+## `SELECT @@VERSION` — the server version banner string.
+fn Mssql::server_version (%opts) {
+    val $r = Mssql::_req({}, \%opts)
+    Mssql::_decode("server_version", mssql__server_version(to_json($r)))->{value}
+}
+
+# ── query / execute ───────────────────────────────────────────────────
+
+## Run a SELECT. $sql uses `@P1`, `@P2`, … placeholders; %opts{params} is an
+## arrayref of bind values. Returns an array of row hashrefs.
+fn Mssql::query ($sql, %opts) {
+    val $r = Mssql::_req({ sql => $sql, params => $opts{params} }, \%opts)
+    @{ Mssql::_decode("query", mssql__query(to_json($r)))->{rows} }
+}
+
+## Return the first row hashref (or undef).
+fn Mssql::query_one ($sql, %opts) {
+    val $r = Mssql::_req({ sql => $sql, params => $opts{params} }, \%opts)
+    Mssql::_decode("query_one", mssql__query_one(to_json($r)))->{row}
+}
+
+## Return the first column of the first row (a scalar), or undef.
+fn Mssql::scalar ($sql, %opts) {
+    val $r = Mssql::_req({ sql => $sql, params => $opts{params} }, \%opts)
+    Mssql::_decode("scalar", mssql__scalar(to_json($r)))->{value}
+}
+
+## True when the query returns at least one row.
+fn Mssql::exists ($sql, %opts) {
+    val $r = Mssql::_req({ sql => $sql, params => $opts{params} }, \%opts)
+    Mssql::_decode("exists", mssql__exists(to_json($r)))->{value}
+}
+
+## Run an INSERT/UPDATE/DELETE/DDL. Returns rows affected.
+fn Mssql::execute ($sql, %opts) {
+    val $r = Mssql::_req({ sql => $sql, params => $opts{params} }, \%opts)
+    Mssql::_decode("execute", mssql__execute(to_json($r)))->{affected}
+}
+
+## Run a non-parametrized statement (may contain multiple `;`-separated
+## statements / batches). Returns the first result set as rows.
+fn Mssql::simple_query ($sql, %opts) {
+    val $r = Mssql::_req({ sql => $sql }, \%opts)
+    @{ Mssql::_decode("simple_query", mssql__simple_query(to_json($r)))->{rows} }
+}
+
+## Run $statements (arrayref) inside one transaction; commit on success, roll
+## back if any statement fails. Returns total rows affected.
+fn Mssql::batch ($statements, %opts) {
+    val $list = ref($statements) eq "ARRAY" ? $statements : [$statements]
+    val $r = Mssql::_req({ statements => $list }, \%opts)
+    Mssql::_decode("batch", mssql__batch(to_json($r)))->{affected}
+}
+
+# ── introspection ─────────────────────────────────────────────────────
+
+## List databases (`sys.databases`). Array of `{ name }` rows.
+fn Mssql::databases (%opts) {
+    val $r = Mssql::_req({}, \%opts)
+    @{ Mssql::_decode("databases", mssql__databases(to_json($r)))->{rows} }
+}
+
+## List tables (`INFORMATION_SCHEMA.TABLES`). Array of
+## `{ TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE }` rows.
+fn Mssql::tables (%opts) {
+    val $r = Mssql::_req({}, \%opts)
+    @{ Mssql::_decode("tables", mssql__tables(to_json($r)))->{rows} }
+}
+
+## Column metadata for $table (`INFORMATION_SCHEMA.COLUMNS`).
+fn Mssql::columns ($table, %opts) {
+    val $r = Mssql::_req({ table => $table }, \%opts)
+    @{ Mssql::_decode("columns", mssql__columns(to_json($r)))->{rows} }
+}
+
+# ── pure URL helpers ──────────────────────────────────────────────────
+
+## Parse an ADO connection string into a hashref (password redacted).
+fn Mssql::parse_url ($url) {
+    Mssql::_decode("parse_url", mssql__parse_url(to_json({ url => $url })))
+}
+
+## Redact the password in an ADO connection string.
+fn Mssql::redact_url ($url) {
+    Mssql::_decode("redact_url", mssql__redact_url(to_json({ url => $url })))->{value}
+}

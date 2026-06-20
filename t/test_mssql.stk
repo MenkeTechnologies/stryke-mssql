@@ -1,0 +1,59 @@
+## t/test_mssql.stk — assertion tests for the stryke `Mssql` package.
+##
+## Connection-free asserts always run. The data asserts need a live SQL Server
+## via $MSSQL_HOST (+ $MSSQL_USER / $MSSQL_PASS / $MSSQL_DB); they short-circuit
+## when none is set so CI without a database stays green. A throwaway local
+## instance works (e.g. the mcr.microsoft.com/mssql/server container).
+
+use Mssql
+
+# ── permission-free: cdylib reachable ───────────────────────────────
+assert_ok Mssql::version(), "Mssql::version returns truthy (cdylib loaded)"
+assert_eq Mssql::redact_url("Server=x;pwd=secret"), "Server=x;pwd=***", "redact pure helper"
+
+# ── live SQL Server (opt-in) ────────────────────────────────────────
+var %conn
+if (defined $ENV{MSSQL_HOST}) {
+    $conn{host}       = $ENV{MSSQL_HOST}
+    $conn{username}   = $ENV{MSSQL_USER} // "sa"
+    $conn{password}   = $ENV{MSSQL_PASS} if defined $ENV{MSSQL_PASS}
+    $conn{database}   = $ENV{MSSQL_DB}   if defined $ENV{MSSQL_DB}
+    $conn{trust_cert} = \1
+
+    val $up = eval { Mssql::ping(%conn) }
+    if ($up) {
+        val $tbl = "stryke_test_$$"
+
+        # 1. scalar
+        assert_eq Mssql::scalar("SELECT 1 + 1", %conn), 2, "scalar arithmetic"
+
+        # 2. create + insert with params
+        Mssql::execute("CREATE TABLE $tbl (id INT PRIMARY KEY, name NVARCHAR(50))", %conn)
+        assert_eq Mssql::execute(
+            "INSERT INTO $tbl (id, name) VALUES (@P1, @P2)",
+            params => [1, "Ada"],
+            %conn,
+        ), 1, "parametrized insert affects one row"
+
+        # 3. query back
+        val @rows = Mssql::query("SELECT id, name FROM $tbl WHERE id = @P1", params => [1], %conn)
+        assert_eq scalar(@rows), 1, "query returns one row"
+        assert_eq $rows[0]{name}, "Ada", "row value round-trips"
+
+        # 4. exists
+        assert_ok Mssql::exists("SELECT 1 FROM $tbl WHERE id = @P1", params => [1], %conn), "exists true"
+        assert_eq Mssql::exists("SELECT 1 FROM $tbl WHERE id = @P1", params => [999], %conn), 0, "exists false"
+
+        # 5. transaction batch
+        Mssql::batch(
+            ["UPDATE $tbl SET name = 'Grace' WHERE id = 1", "INSERT INTO $tbl VALUES (2, 'Alan')"],
+            %conn,
+        )
+        assert_eq Mssql::scalar("SELECT COUNT(*) FROM $tbl", %conn), 2, "batch committed both statements"
+
+        # cleanup
+        Mssql::execute("DROP TABLE $tbl", %conn)
+    }
+}
+
+test_run

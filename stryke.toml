@@ -1,0 +1,36 @@
+[package]
+name = "stryke-mssql"
+version = "0.1.0"
+description = "Microsoft SQL Server client for stryke. cdylib loaded in-process — query/execute/batch over tiberius (TDS), blocking facade over an embedded tokio runtime, connection cached per (host, db, auth)."
+authors = ["MenkeTechnologies"]
+license = "MIT"
+repository = "https://github.com/MenkeTechnologies/stryke-mssql"
+edition = "2026"
+
+[ffi]
+lib-name = "stryke_mssql"
+namespace = "Mssql"
+exports = [
+    "mssql__version",
+    "mssql__ping",
+    "mssql__server_version",
+    "mssql__query",
+    "mssql__query_one",
+    "mssql__scalar",
+    "mssql__exists",
+    "mssql__execute",
+    "mssql__simple_query",
+    "mssql__batch",
+    "mssql__databases",
+    "mssql__tables",
+    "mssql__columns",
+    "mssql__parse_url",
+    "mssql__redact_url",
+]
+
+[scripts]
+build = "cargo build --release"
+build-debug = "cargo build"
+clean = "cargo clean"
+test = "s test t/"
+install = "s pkg install -g ."

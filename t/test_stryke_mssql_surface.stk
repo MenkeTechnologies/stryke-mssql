@@ -1,0 +1,38 @@
+## t/test_stryke_mssql_surface.stk — wrapper-completeness + pure-helper pin.
+##
+## Asserts every public `fn Mssql::name` resolves via `use`, then exercises the
+## connection-free URL helpers. Permission-free — no SQL Server, so CI without
+## a database validates the surface and the parse/redact logic.
+
+use Mssql
+
+# ── wrapper surface ────────────────────────────────────────
+assert_ok exists &Mssql::version, "Mssql::version exists"
+assert_ok exists &Mssql::ping, "Mssql::ping exists"
+assert_ok exists &Mssql::server_version, "Mssql::server_version exists"
+assert_ok exists &Mssql::query, "Mssql::query exists"
+assert_ok exists &Mssql::query_one, "Mssql::query_one exists"
+assert_ok exists &Mssql::scalar, "Mssql::scalar exists"
+assert_ok exists &Mssql::exists, "Mssql::exists exists"
+assert_ok exists &Mssql::execute, "Mssql::execute exists"
+assert_ok exists &Mssql::simple_query, "Mssql::simple_query exists"
+assert_ok exists &Mssql::batch, "Mssql::batch exists"
+assert_ok exists &Mssql::databases, "Mssql::databases exists"
+assert_ok exists &Mssql::tables, "Mssql::tables exists"
+assert_ok exists &Mssql::columns, "Mssql::columns exists"
+assert_ok exists &Mssql::parse_url, "Mssql::parse_url exists"
+assert_ok exists &Mssql::redact_url, "Mssql::redact_url exists"
+
+# ── version (cdylib loaded) ────────────────────────────────
+assert_ok Mssql::version(), "Mssql::version returns truthy (cdylib loaded)"
+
+# ── pure URL helpers (no database) ─────────────────────────
+val $p = Mssql::parse_url("Server=db;Database=app;User Id=sa;Password=Secret1;")
+assert_eq $p->{server}, "db", "parse_url server"
+assert_eq $p->{database}, "app", "parse_url database"
+assert_eq $p->{password}, "***", "parse_url redacts password"
+
+assert_eq Mssql::redact_url("Server=db;Password=Secret1;Database=app"),
+    "Server=db;Password=***;Database=app", "redact_url keeps structure, hides password"
+
+test_run
