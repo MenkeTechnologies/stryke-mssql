@@ -37,7 +37,7 @@ if (defined $ENV{MSSQL_HOST}) {
 
         # 3. query back
         val @rows = Mssql::query("SELECT id, name FROM $tbl WHERE id = @P1", params => [1], %conn)
-        assert_eq scalar(@rows), 1, "query returns one row"
+        assert_eq len(@rows), 1, "query returns one row"
         assert_eq $rows[0]{name}, "Ada", "row value round-trips"
 
         # 4. exists
