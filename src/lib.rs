@@ -529,6 +529,110 @@ pub extern "C" fn mssql__redact_url(args: *const c_char) -> *const c_char {
     })
 }
 
+/// Build an ADO connection string from a components map (inverse of parse_url).
+#[no_mangle]
+pub extern "C" fn mssql__build_url(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let parts = v
+            .get("parts")
+            .and_then(|x| x.as_object())
+            .ok_or_else(|| anyhow!("missing parts object"))?;
+        Ok(json!({ "value": build_ado(parts) }))
+    })
+}
+
+/// Quote a T-SQL identifier as `[name]` (doubling `]`), for names that can't be
+/// parameterized.
+#[no_mangle]
+pub extern "C" fn mssql__quote_ident(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let name = v
+            .get("name")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| anyhow!("missing name"))?;
+        Ok(json!({ "value": quote_ident(name) }))
+    })
+}
+
+/// Split a T-SQL script into batches on `GO` separator lines.
+#[no_mangle]
+pub extern "C" fn mssql__split_batch(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let script = v
+            .get("script")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| anyhow!("missing script"))?;
+        Ok(json!({ "batches": split_batch(script) }))
+    })
+}
+
+/// Build an ADO-style connection string from a components map. Keys are emitted
+/// in a stable order; unknown keys pass through verbatim after the known set.
+fn build_ado(v: &serde_json::Map<String, Value>) -> String {
+    const KNOWN: [(&str, &str); 6] = [
+        ("server", "Server"),
+        ("database", "Database"),
+        ("user_id", "User Id"),
+        ("password", "Password"),
+        ("encrypt", "Encrypt"),
+        ("trust_server_certificate", "TrustServerCertificate"),
+    ];
+    let mut parts = Vec::new();
+    for (key, label) in KNOWN {
+        if let Some(val) = v.get(key).map(value_str) {
+            if !val.is_empty() {
+                parts.push(format!("{label}={val}"));
+            }
+        }
+    }
+    let mut extra: Vec<&String> = v
+        .keys()
+        .filter(|k| !KNOWN.iter().any(|(known, _)| *known == k.as_str()))
+        .collect();
+    extra.sort();
+    for k in extra {
+        parts.push(format!("{k}={}", value_str(&v[k])));
+    }
+    parts.join(";")
+}
+
+/// Render a JSON scalar to its connection-string text.
+fn value_str(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// Quote a T-SQL identifier as `[name]`, doubling any `]`. Use for identifiers
+/// (table/column names) that can't be parameterized.
+fn quote_ident(name: &str) -> String {
+    format!("[{}]", name.replace(']', "]]"))
+}
+
+/// Split a T-SQL script into batches on lines containing only `GO` (the SSMS
+/// batch separator, case-insensitive). Empty batches are dropped.
+fn split_batch(script: &str) -> Vec<String> {
+    let mut batches = Vec::new();
+    let mut cur = String::new();
+    for line in script.lines() {
+        if line.trim().eq_ignore_ascii_case("GO") {
+            if !cur.trim().is_empty() {
+                batches.push(cur.trim().to_string());
+            }
+            cur.clear();
+        } else {
+            cur.push_str(line);
+            cur.push('\n');
+        }
+    }
+    if !cur.trim().is_empty() {
+        batches.push(cur.trim().to_string());
+    }
+    batches
+}
+
 // ── pure logic (unit-tested) ────────────────────────────────────────────────
 
 /// Parse an ADO-style `key=value;key=value` connection string into a JSON map
@@ -605,5 +709,46 @@ mod tests {
         assert_eq!(p.len(), 4);
         assert_eq!(p[1], json!("a"));
         assert!(params_of(&json!({"sql": "x"})).is_empty());
+    }
+
+    #[test]
+    fn build_ado_stable_order_and_extras() {
+        let m = json!({
+            "database": "app",
+            "server": "db",
+            "user_id": "sa",
+            "password": "Secret1",
+            "application name": "stryke"
+        });
+        assert_eq!(
+            build_ado(m.as_object().unwrap()),
+            "Server=db;Database=app;User Id=sa;Password=Secret1;application name=stryke"
+        );
+    }
+
+    #[test]
+    fn build_ado_roundtrips_through_parse() {
+        let m = json!({"server": "db", "database": "app"});
+        let url = build_ado(m.as_object().unwrap());
+        let parsed = parse_ado(&url);
+        assert_eq!(parsed["server"], "db");
+        assert_eq!(parsed["database"], "app");
+    }
+
+    #[test]
+    fn quote_ident_escapes_brackets() {
+        assert_eq!(quote_ident("users"), "[users]");
+        assert_eq!(quote_ident("weird]name"), "[weird]]name]");
+    }
+
+    #[test]
+    fn split_batch_on_go_lines() {
+        let script = "CREATE TABLE a (id int)\nGO\nINSERT INTO a VALUES (1)\ngo\n";
+        let b = split_batch(script);
+        assert_eq!(b.len(), 2);
+        assert_eq!(b[0], "CREATE TABLE a (id int)");
+        assert_eq!(b[1], "INSERT INTO a VALUES (1)");
+        // a "GO" inside a longer token is not a separator
+        assert_eq!(split_batch("SELECT 'GONE'").len(), 1);
     }
 }
