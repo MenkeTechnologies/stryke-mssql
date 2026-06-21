@@ -53,7 +53,7 @@ On first `use Mssql`, stryke dlopens the cdylib in-process and registers every
 ```perl
 use Mssql
 
-var %conn = (
+val %conn = (
     host       => "localhost",
     database   => "app",
     username   => "sa",
@@ -63,7 +63,7 @@ var %conn = (
 
 # parametrized query — @P1, @P2, ...
 val @users = Mssql::query("SELECT id, name FROM users WHERE active = @P1", params => [1], %conn)
-p scalar(@users)
+p len(@users)
 
 # scalar + exists
 p Mssql::scalar("SELECT COUNT(*) FROM users", %conn)
