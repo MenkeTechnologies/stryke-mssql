@@ -554,6 +554,19 @@ pub extern "C" fn mssql__quote_ident(args: *const c_char) -> *const c_char {
     })
 }
 
+/// Escape a string to match literally inside a T-SQL `LIKE` pattern (`%`/`_`/`[`
+/// wrapped in `[...]` classes; no ESCAPE clause needed).
+#[no_mangle]
+pub extern "C" fn mssql__escape_like(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let s = v
+            .get("value")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| anyhow!("missing value"))?;
+        Ok(json!({ "value": escape_like(s) }))
+    })
+}
+
 /// Split a T-SQL script into batches on `GO` separator lines.
 #[no_mangle]
 pub extern "C" fn mssql__split_batch(args: *const c_char) -> *const c_char {
@@ -609,6 +622,23 @@ fn value_str(v: &Value) -> String {
 /// (table/column names) that can't be parameterized.
 fn quote_ident(name: &str) -> String {
     format!("[{}]", name.replace(']', "]]"))
+}
+
+/// Escape a string to match literally inside a T-SQL `LIKE` pattern. SQL Server
+/// wildcards (`%`, `_`, `[`) are wrapped in a `[...]` character class — which
+/// needs no `ESCAPE` clause. The result is the pattern body; wrap it with
+/// surrounding `%` and bind it as a parameter.
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '%' => out.push_str("[%]"),
+            '_' => out.push_str("[_]"),
+            '[' => out.push_str("[[]"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// Split a T-SQL script into batches on lines containing only `GO` (the SSMS
@@ -739,6 +769,14 @@ mod tests {
     fn quote_ident_escapes_brackets() {
         assert_eq!(quote_ident("users"), "[users]");
         assert_eq!(quote_ident("weird]name"), "[weird]]name]");
+    }
+
+    #[test]
+    fn escape_like_bracket_classes() {
+        assert_eq!(escape_like("100%"), "100[%]");
+        assert_eq!(escape_like("a_b"), "a[_]b");
+        assert_eq!(escape_like("x[y"), "x[[]y");
+        assert_eq!(escape_like("plain"), "plain");
     }
 
     #[test]

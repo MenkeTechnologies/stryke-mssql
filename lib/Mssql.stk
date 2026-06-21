@@ -146,6 +146,12 @@ fn Mssql::quote_ident ($name) {
     Mssql::_decode("quote_ident", mssql__quote_ident(to_json({ name => $name })))->{value}
 }
 
+## Escape $value to match literally inside a T-SQL `LIKE` pattern (`%`/`_`/`[`
+## wrapped in `[...]` classes; no ESCAPE clause needed).
+fn Mssql::escape_like ($value) {
+    Mssql::_decode("escape_like", mssql__escape_like(to_json({ value => $value })))->{value}
+}
+
 ## Split a T-SQL $script into batches on `GO` separator lines. Returns `[ str ]`.
 fn Mssql::split_batch ($script) {
     @{ Mssql::_decode("split_batch", mssql__split_batch(to_json({ script => $script })))->{batches} }

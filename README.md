@@ -125,7 +125,7 @@ connection that errors is evicted and reopened on the next call.
 | Query         | `query`, `query_one`, `scalar`, `exists`, `simple_query`               |
 | Write         | `execute`, `batch` (transaction)                                       |
 | Introspection | `databases`, `tables`, `columns`                                       |
-| SQL helpers   | `quote_ident`, `split_batch`                                           |
+| SQL helpers   | `quote_ident`, `escape_like`, `split_batch`                            |
 | URL helpers   | `parse_url`, `redact_url`, `build_url`                                 |
 
 Parametrized statements use `@P1`, `@P2`, … placeholders bound from `params`
