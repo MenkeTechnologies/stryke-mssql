@@ -87,6 +87,15 @@ fn Mssql::execute ($sql, %opts) {
     Mssql::_decode("execute", mssql__execute(to_json($r)))->{affected}
 }
 
+## Multi-row insert into $table from an arrayref of row hashrefs. Columns are
+## taken from the first row; values are emitted as T-SQL literals. Returns rows
+## affected.
+fn Mssql::insert ($table, $rows, %opts) {
+    val $list = ref($rows) eq "ARRAY" ? $rows : [$rows]
+    val $r = Mssql::_req({ table => $table, rows => $list }, \%opts)
+    Mssql::_decode("insert", mssql__insert(to_json($r)))->{affected}
+}
+
 ## Run a non-parametrized statement (may contain multiple `;`-separated
 ## statements / batches). Returns the first result set as rows.
 fn Mssql::simple_query ($sql, %opts) {

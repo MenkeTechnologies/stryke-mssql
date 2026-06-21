@@ -1,6 +1,6 @@
 [package]
 name = "stryke-mssql"
-version = "0.4.0"
+version = "0.5.0"
 description = "Microsoft SQL Server client for stryke. cdylib loaded in-process — query/execute/batch over tiberius (TDS), blocking facade over an embedded tokio runtime, connection cached per (host, db, auth)."
 authors = ["MenkeTechnologies"]
 license = "MIT"
@@ -19,6 +19,7 @@ exports = [
     "mssql__scalar",
     "mssql__exists",
     "mssql__execute",
+    "mssql__insert",
     "mssql__simple_query",
     "mssql__batch",
     "mssql__databases",

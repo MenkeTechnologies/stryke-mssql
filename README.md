@@ -123,7 +123,7 @@ connection that errors is evicted and reopened on the next call.
 | ------------- | ---------------------------------------------------------------------- |
 | Liveness      | `version`, `ping`, `server_version`                                     |
 | Query         | `query`, `query_one`, `scalar`, `exists`, `simple_query`               |
-| Write         | `execute`, `batch` (transaction)                                       |
+| Write         | `execute`, `insert` (multi-row), `batch` (transaction)                 |
 | Introspection | `databases`, `tables`, `columns`                                       |
 | SQL helpers   | `quote_ident`, `quote_literal`, `valid_identifier`, `escape_like`, `format_value`, `format_in_list`, `split_batch` |
 | URL helpers   | `parse_url`, `redact_url`, `build_url`                                 |

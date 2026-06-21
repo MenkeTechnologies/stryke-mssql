@@ -398,6 +398,36 @@ pub extern "C" fn mssql__execute(args: *const c_char) -> *const c_char {
     })
 }
 
+/// Multi-row insert from an array of row objects. Columns are taken from the
+/// first row; values are emitted as T-SQL literals (no parameterization — for
+/// bulk literal loads). Returns rows affected + count.
+#[no_mangle]
+pub extern "C" fn mssql__insert(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let table = v["table"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing table"))?;
+        let rows = v
+            .get("rows")
+            .and_then(|r| r.as_array())
+            .ok_or_else(|| anyhow!("missing rows array"))?;
+        if rows.is_empty() {
+            return Err(anyhow!("rows array is empty"));
+        }
+        let count = rows.len();
+        let sql = build_insert_sql(table, rows)?;
+        let affected = with_client(&v, |c| async move {
+            let mut client = c.lock().await;
+            let res = Query::new(&sql)
+                .execute(&mut client)
+                .await
+                .map_err(|e| anyhow!("insert: {e}"))?;
+            Ok(res.rows_affected().iter().sum::<u64>())
+        })?;
+        Ok(json!({ "ok": true, "affected": affected, "count": count }))
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn mssql__simple_query(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
@@ -717,6 +747,52 @@ fn valid_identifier(s: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Quote a possibly schema-qualified name (`dbo.users` → `[dbo].[users]`), each
+/// dot-separated segment bracket-quoted independently.
+fn quote_qualified(name: &str) -> String {
+    name.split('.')
+        .map(quote_ident)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// Build a multi-row `INSERT INTO <table> (cols) VALUES (...),(...)`. Columns are
+/// the (sorted) keys of the first row; each row's values are emitted in that
+/// column order (a missing key → `NULL`) as T-SQL literals via `format_value`.
+fn build_insert_sql(table: &str, rows: &[Value]) -> Result<String> {
+    let first = rows
+        .first()
+        .and_then(|r| r.as_object())
+        .ok_or_else(|| anyhow!("rows[0] must be an object"))?;
+    let mut cols: Vec<&String> = first.keys().collect();
+    cols.sort();
+    if cols.is_empty() {
+        return Err(anyhow!("rows[0] has no columns"));
+    }
+    let col_list = cols
+        .iter()
+        .map(|c| quote_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut tuples = Vec::with_capacity(rows.len());
+    for row in rows {
+        let obj = row
+            .as_object()
+            .ok_or_else(|| anyhow!("every row must be an object"))?;
+        let vals: Result<Vec<String>> = cols
+            .iter()
+            .map(|c| format_value(obj.get(*c).unwrap_or(&Value::Null)))
+            .collect();
+        tuples.push(format!("({})", vals?.join(", ")));
+    }
+    Ok(format!(
+        "INSERT INTO {} ({}) VALUES {}",
+        quote_qualified(table),
+        col_list,
+        tuples.join(", ")
+    ))
+}
+
 /// Escape a string to match literally inside a T-SQL `LIKE` pattern. SQL Server
 /// wildcards (`%`, `_`, `[`) are wrapped in a `[...]` character class — which
 /// needs no `ESCAPE` clause. The result is the pattern body; wrap it with
@@ -823,6 +899,32 @@ mod tests {
             "Server=db;Password=***;Database=app"
         );
         assert_eq!(redact_ado("Server=db;pwd=x"), "Server=db;pwd=***");
+    }
+
+    #[test]
+    fn quote_qualified_quotes_each_segment() {
+        assert_eq!(quote_qualified("users"), "[users]");
+        assert_eq!(quote_qualified("dbo.users"), "[dbo].[users]");
+    }
+
+    #[test]
+    fn build_insert_sql_multi_row() {
+        let rows = vec![
+            json!({"id": 1, "name": "ada"}),
+            json!({"id": 2, "name": "alan's"}),
+        ];
+        assert_eq!(
+            build_insert_sql("dbo.users", &rows).unwrap(),
+            "INSERT INTO [dbo].[users] ([id], [name]) VALUES (1, 'ada'), (2, 'alan''s')"
+        );
+        // missing key → NULL
+        let mixed = vec![json!({"id": 1, "name": "x"}), json!({"id": 2})];
+        assert_eq!(
+            build_insert_sql("t", &mixed).unwrap(),
+            "INSERT INTO [t] ([id], [name]) VALUES (1, 'x'), (2, NULL)"
+        );
+        // array value errors (no T-SQL array literal)
+        assert!(build_insert_sql("t", &[json!({"a": [1, 2]})]).is_err());
     }
 
     #[test]
