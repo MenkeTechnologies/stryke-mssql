@@ -567,6 +567,51 @@ pub extern "C" fn mssql__escape_like(args: *const c_char) -> *const c_char {
     })
 }
 
+/// Wrap a string as a single-quoted T-SQL literal.
+#[no_mangle]
+pub extern "C" fn mssql__quote_literal(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let s = v
+            .get("value")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| anyhow!("missing value"))?;
+        Ok(json!({ "value": quote_literal(s) }))
+    })
+}
+
+/// Format a JSON scalar as a T-SQL literal (string/number/bool/null).
+#[no_mangle]
+pub extern "C" fn mssql__format_value(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let val = v.get("value").ok_or_else(|| anyhow!("missing value"))?;
+        Ok(json!({ "value": format_value(val)? }))
+    })
+}
+
+/// Render an array of scalar values into an `IN (...)` list.
+#[no_mangle]
+pub extern "C" fn mssql__format_in_list(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let vals = v
+            .get("values")
+            .and_then(|x| x.as_array())
+            .ok_or_else(|| anyhow!("missing values array"))?;
+        Ok(json!({ "value": format_in_list(vals)? }))
+    })
+}
+
+/// True when a string is a valid unquoted T-SQL identifier.
+#[no_mangle]
+pub extern "C" fn mssql__valid_identifier(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let s = v
+            .get("value")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| anyhow!("missing value"))?;
+        Ok(json!({ "valid": valid_identifier(s) }))
+    })
+}
+
 /// Split a T-SQL script into batches on `GO` separator lines.
 #[no_mangle]
 pub extern "C" fn mssql__split_batch(args: *const c_char) -> *const c_char {
@@ -622,6 +667,54 @@ fn value_str(v: &Value) -> String {
 /// (table/column names) that can't be parameterized.
 fn quote_ident(name: &str) -> String {
     format!("[{}]", name.replace(']', "]]"))
+}
+
+/// Escape a string for a single-quoted T-SQL literal (doubles `'`).
+fn escape_string(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// Wrap a string as a single-quoted T-SQL literal.
+fn quote_literal(s: &str) -> String {
+    format!("'{}'", escape_string(s))
+}
+
+/// Format a JSON scalar as a T-SQL literal: string→`'...'`, number→as-is,
+/// bool→`1`/`0` (T-SQL `bit`), null→`NULL`. T-SQL has no array/object literal,
+/// so those error — build `IN` lists with `format_in_list` instead.
+fn format_value(v: &Value) -> Result<String> {
+    Ok(match v {
+        Value::Null => "NULL".to_string(),
+        Value::Bool(b) => {
+            if *b {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }
+        }
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => quote_literal(s),
+        Value::Array(_) | Value::Object(_) => {
+            return Err(anyhow!("T-SQL has no array/object literal"))
+        }
+    })
+}
+
+/// Render scalar values into an `IN (...)` list. Empty → `(NULL)` (matches
+/// nothing).
+fn format_in_list(vals: &[Value]) -> Result<String> {
+    if vals.is_empty() {
+        return Ok("(NULL)".to_string());
+    }
+    let parts: Result<Vec<String>> = vals.iter().map(format_value).collect();
+    Ok(format!("({})", parts?.join(", ")))
+}
+
+/// A T-SQL identifier is safe unquoted when it matches `[A-Za-z_][A-Za-z0-9_]*`.
+fn valid_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Escape a string to match literally inside a T-SQL `LIKE` pattern. SQL Server
@@ -777,6 +870,36 @@ mod tests {
         assert_eq!(escape_like("a_b"), "a[_]b");
         assert_eq!(escape_like("x[y"), "x[[]y");
         assert_eq!(escape_like("plain"), "plain");
+    }
+
+    #[test]
+    fn quote_literal_doubles_single_quote() {
+        assert_eq!(quote_literal("O'Brien"), "'O''Brien'");
+        assert_eq!(quote_literal("plain"), "'plain'");
+    }
+
+    #[test]
+    fn format_value_scalars_and_array_errors() {
+        assert_eq!(format_value(&json!(7)).unwrap(), "7");
+        assert_eq!(format_value(&json!(true)).unwrap(), "1");
+        assert_eq!(format_value(&json!(false)).unwrap(), "0");
+        assert_eq!(format_value(&Value::Null).unwrap(), "NULL");
+        assert_eq!(format_value(&json!("a'b")).unwrap(), "'a''b'");
+        assert!(format_value(&json!([1, 2])).is_err());
+    }
+
+    #[test]
+    fn format_in_list_and_empty_sentinel() {
+        assert_eq!(format_in_list(&[json!(1), json!("a")]).unwrap(), "(1, 'a')");
+        assert_eq!(format_in_list(&[]).unwrap(), "(NULL)");
+    }
+
+    #[test]
+    fn valid_identifier_rules() {
+        assert!(valid_identifier("col_1"));
+        assert!(valid_identifier("_x"));
+        assert!(!valid_identifier("1col"));
+        assert!(!valid_identifier("has space"));
     }
 
     #[test]

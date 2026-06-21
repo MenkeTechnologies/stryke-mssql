@@ -152,6 +152,27 @@ fn Mssql::escape_like ($value) {
     Mssql::_decode("escape_like", mssql__escape_like(to_json({ value => $value })))->{value}
 }
 
+## Wrap $value as a single-quoted T-SQL literal (doubles `'`).
+fn Mssql::quote_literal ($value) {
+    Mssql::_decode("quote_literal", mssql__quote_literal(to_json({ value => $value })))->{value}
+}
+
+## Format a scalar $value as a T-SQL literal (string/number/bool/null).
+fn Mssql::format_value ($value) {
+    Mssql::_decode("format_value", mssql__format_value(to_json({ value => $value })))->{value}
+}
+
+## Render an arrayref of scalar $values into a T-SQL `IN (...)` list.
+fn Mssql::format_in_list ($values) {
+    val $list = ref($values) eq "ARRAY" ? $values : [$values]
+    Mssql::_decode("format_in_list", mssql__format_in_list(to_json({ values => $list })))->{value}
+}
+
+## True when $value is a valid unquoted T-SQL identifier.
+fn Mssql::valid_identifier ($value) {
+    Mssql::_decode("valid_identifier", mssql__valid_identifier(to_json({ value => $value })))->{valid}
+}
+
 ## Split a T-SQL $script into batches on `GO` separator lines. Returns `[ str ]`.
 fn Mssql::split_batch ($script) {
     @{ Mssql::_decode("split_batch", mssql__split_batch(to_json({ script => $script })))->{batches} }
