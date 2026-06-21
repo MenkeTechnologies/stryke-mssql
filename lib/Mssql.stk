@@ -96,6 +96,18 @@ fn Mssql::insert ($table, $rows, %opts) {
     Mssql::_decode("insert", mssql__insert(to_json($r)))->{affected}
 }
 
+## DROP TABLE IF EXISTS $table (schema-qualified name bracket-quoted).
+fn Mssql::drop_table ($table, %opts) {
+    val $r = Mssql::_req({ table => $table }, \%opts)
+    Mssql::_decode("drop_table", mssql__drop_table(to_json($r)))->{ok}
+}
+
+## TRUNCATE TABLE $table (schema-qualified name bracket-quoted).
+fn Mssql::truncate ($table, %opts) {
+    val $r = Mssql::_req({ table => $table }, \%opts)
+    Mssql::_decode("truncate", mssql__truncate(to_json($r)))->{ok}
+}
+
 ## Run a non-parametrized statement (may contain multiple `;`-separated
 ## statements / batches). Returns the first result set as rows.
 fn Mssql::simple_query ($sql, %opts) {

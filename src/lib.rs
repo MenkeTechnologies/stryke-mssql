@@ -428,6 +428,46 @@ pub extern "C" fn mssql__insert(args: *const c_char) -> *const c_char {
     })
 }
 
+/// `DROP TABLE IF EXISTS <table>` (schema-qualified name bracket-quoted).
+#[no_mangle]
+pub extern "C" fn mssql__drop_table(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let table = v["table"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing table"))?;
+        let sql = format!("DROP TABLE IF EXISTS {}", quote_qualified(table));
+        with_client(&v, |c| async move {
+            let mut client = c.lock().await;
+            Query::new(&sql)
+                .execute(&mut client)
+                .await
+                .map_err(|e| anyhow!("drop_table: {e}"))?;
+            Ok(())
+        })?;
+        Ok(json!({ "ok": true }))
+    })
+}
+
+/// `TRUNCATE TABLE <table>` (schema-qualified name bracket-quoted).
+#[no_mangle]
+pub extern "C" fn mssql__truncate(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let table = v["table"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing table"))?;
+        let sql = format!("TRUNCATE TABLE {}", quote_qualified(table));
+        with_client(&v, |c| async move {
+            let mut client = c.lock().await;
+            Query::new(&sql)
+                .execute(&mut client)
+                .await
+                .map_err(|e| anyhow!("truncate: {e}"))?;
+            Ok(())
+        })?;
+        Ok(json!({ "ok": true }))
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn mssql__simple_query(args: *const c_char) -> *const c_char {
     ffi_call(args, |v| {
