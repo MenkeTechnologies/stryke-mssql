@@ -428,6 +428,31 @@ pub extern "C" fn mssql__insert(args: *const c_char) -> *const c_char {
     })
 }
 
+/// `CREATE TABLE <table> (<col> <type>, …)` from an ordered `columns` array of
+/// `{name, type}`.
+#[no_mangle]
+pub extern "C" fn mssql__create_table(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let table = v["table"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing table"))?;
+        let columns = v
+            .get("columns")
+            .and_then(|c| c.as_array())
+            .ok_or_else(|| anyhow!("missing columns array"))?;
+        let sql = build_create_table_sql(table, columns)?;
+        with_client(&v, |c| async move {
+            let mut client = c.lock().await;
+            Query::new(&sql)
+                .execute(&mut client)
+                .await
+                .map_err(|e| anyhow!("create_table: {e}"))?;
+            Ok(())
+        })?;
+        Ok(json!({ "ok": true }))
+    })
+}
+
 /// `DROP TABLE IF EXISTS <table>` (schema-qualified name bracket-quoted).
 #[no_mangle]
 pub extern "C" fn mssql__drop_table(args: *const c_char) -> *const c_char {
@@ -833,6 +858,35 @@ fn build_insert_sql(table: &str, rows: &[Value]) -> Result<String> {
     ))
 }
 
+/// Build `CREATE TABLE <table> (<col> <type>, …)`. `columns` is an ordered array
+/// of `{name, type}` objects — names are bracket-quoted; the type string (e.g.
+/// `INT NOT NULL`, `NVARCHAR(100)`) is passed through verbatim (caller-owned).
+fn build_create_table_sql(table: &str, columns: &[Value]) -> Result<String> {
+    if columns.is_empty() {
+        return Err(anyhow!("columns array is empty"));
+    }
+    let mut defs = Vec::with_capacity(columns.len());
+    for col in columns {
+        let obj = col
+            .as_object()
+            .ok_or_else(|| anyhow!("each column must be an object {{name, type}}"))?;
+        let name = obj
+            .get("name")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| anyhow!("column missing name"))?;
+        let ty = obj
+            .get("type")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| anyhow!("column {name:?} missing type"))?;
+        defs.push(format!("{} {}", quote_ident(name), ty));
+    }
+    Ok(format!(
+        "CREATE TABLE {} ({})",
+        quote_qualified(table),
+        defs.join(", ")
+    ))
+}
+
 /// Escape a string to match literally inside a T-SQL `LIKE` pattern. SQL Server
 /// wildcards (`%`, `_`, `[`) are wrapped in a `[...]` character class — which
 /// needs no `ESCAPE` clause. The result is the pattern body; wrap it with
@@ -965,6 +1019,20 @@ mod tests {
         );
         // array value errors (no T-SQL array literal)
         assert!(build_insert_sql("t", &[json!({"a": [1, 2]})]).is_err());
+    }
+
+    #[test]
+    fn build_create_table_sql_quotes_names_passes_types() {
+        let cols = vec![
+            json!({"name": "id", "type": "INT PRIMARY KEY"}),
+            json!({"name": "full name", "type": "NVARCHAR(100)"}),
+        ];
+        assert_eq!(
+            build_create_table_sql("dbo.t", &cols).unwrap(),
+            "CREATE TABLE [dbo].[t] ([id] INT PRIMARY KEY, [full name] NVARCHAR(100))"
+        );
+        assert!(build_create_table_sql("t", &[]).is_err());
+        assert!(build_create_table_sql("t", &[json!({"name": "x"})]).is_err());
     }
 
     #[test]

@@ -96,6 +96,14 @@ fn Mssql::insert ($table, $rows, %opts) {
     Mssql::_decode("insert", mssql__insert(to_json($r)))->{affected}
 }
 
+## CREATE TABLE $table from $columns (arrayref of `{ name, type }` hashrefs;
+## names bracket-quoted, types passed through). %opts for connection.
+fn Mssql::create_table ($table, $columns, %opts) {
+    val $list = ref($columns) eq "ARRAY" ? $columns : [$columns]
+    val $r = Mssql::_req({ table => $table, columns => $list }, \%opts)
+    Mssql::_decode("create_table", mssql__create_table(to_json($r)))->{ok}
+}
+
 ## DROP TABLE IF EXISTS $table (schema-qualified name bracket-quoted).
 fn Mssql::drop_table ($table, %opts) {
     val $r = Mssql::_req({ table => $table }, \%opts)
