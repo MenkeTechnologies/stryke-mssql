@@ -79,7 +79,7 @@
             <a href="https://github.com/MenkeTechnologies/strykelang" target="_blank" rel="noopener noreferrer">strykelang</a>
           </nav>
           <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.75;">
-            Opt-in stryke connector package &middot; cdylib <code>libstryke_mssql</code> &middot; namespace <code>Mssql</code> &middot; JSON-in/JSON-out FFI over dlopen
+            Opt-in stryke connector package <code>v0.7.0</code> &middot; cdylib <code>libstryke_mssql</code> &middot; namespace <code>Mssql</code> &middot; 36 functions &middot; JSON-in/JSON-out FFI over dlopen
           </p>
         </div>
         <div class="tutorial-toolbar">
@@ -101,6 +101,9 @@
         <div class="stat-card"><div class="stat-val cyan">opt-in</div><div class="stat-label">Tier</div></div>
         <div class="stat-card"><div class="stat-val">cdylib</div><div class="stat-label">Load model (dlopen)</div></div>
         <div class="stat-card"><div class="stat-val green">TDS</div><div class="stat-label">Driver (tiberius, rustls)</div></div>
+        <div class="stat-card"><div class="stat-val cyan">36</div><div class="stat-label">Exported functions</div></div>
+        <div class="stat-card"><div class="stat-val">v0.7.0</div><div class="stat-label">Package version</div></div>
+        <div class="stat-card"><div class="stat-val green">2012+</div><div class="stat-label">Min SQL Server / Azure SQL</div></div>
       </div>
 
       <hr class="section-rule">
@@ -123,9 +126,48 @@
         <tbody>
           <tr><td>Liveness</td><td><code>version</code>, <code>ping</code>, <code>server_version</code></td></tr>
           <tr><td>Query</td><td><code>query</code>, <code>query_one</code>, <code>scalar</code>, <code>exists</code>, <code>simple_query</code></td></tr>
-          <tr><td>Write</td><td><code>execute</code>, <code>batch</code> (transaction)</td></tr>
+          <tr><td>Write</td><td><code>execute</code>, <code>insert</code> (multi-row), <code>batch</code> (transaction)</td></tr>
+          <tr><td>DDL</td><td><code>create_table</code>, <code>drop_table</code>, <code>truncate</code></td></tr>
           <tr><td>Introspection</td><td><code>databases</code>, <code>tables</code>, <code>columns</code>, <code>views</code>, <code>schemas</code>, <code>primary_keys</code>, <code>foreign_keys</code>, <code>indexes</code>, <code>table_exists</code>, <code>current_database</code>, <code>count</code>, <code>row_count</code></td></tr>
-          <tr><td>URL helpers</td><td><code>parse_url</code>, <code>redact_url</code></td></tr>
+          <tr><td>SQL helpers</td><td><code>quote_ident</code>, <code>quote_literal</code>, <code>valid_identifier</code>, <code>escape_like</code>, <code>format_value</code>, <code>format_in_list</code>, <code>split_batch</code></td></tr>
+          <tr><td>URL helpers</td><td><code>parse_url</code>, <code>redact_url</code>, <code>build_url</code></td></tr>
+        </tbody>
+      </table>
+
+      <hr class="section-rule">
+      <h2 class="tutorial-title"><span class="step-hash">@</span>CONNECTION RESOLUTION</h2>
+      <p>Connection params arrive as a JSON hash on each call. Discrete keys are read with documented defaults; when neither <code>url</code> nor <code>host</code> is supplied and <code>$MSSQL_URL</code> is set, that ADO connection string is used as the fallback. The resolved tuple <code>(host, port, database, auth, encrypt)</code> is the cache key.</p>
+      <table class="arch-table">
+        <thead><tr><th>Key</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>host</code></td><td><code>127.0.0.1</code></td><td>Server host.</td></tr>
+          <tr><td><code>port</code></td><td><code>1433</code></td><td>TDS port.</td></tr>
+          <tr><td><code>database</code></td><td>login default</td><td>Initial database for the session.</td></tr>
+          <tr><td><code>username</code> / <code>password</code></td><td>&mdash;</td><td>SQL authentication.</td></tr>
+          <tr><td><code>encrypt</code></td><td><code>required</code></td><td><code>required</code> / <code>off</code> / <code>not_supported</code> → TDS <code>EncryptionLevel</code>.</td></tr>
+          <tr><td><code>trust_cert</code></td><td>off</td><td>Truthy accepts a self-signed server certificate (dev).</td></tr>
+          <tr><td><code>url</code></td><td>&mdash;</td><td>ADO string; overrides the discrete keys. Falls back to <code>$MSSQL_URL</code>.</td></tr>
+        </tbody>
+      </table>
+
+      <hr class="section-rule">
+      <h2 class="tutorial-title"><span class="step-hash">!</span>LOAD MODEL (FFI)</h2>
+      <p>Each export is a <code>#[no_mangle] extern "C" fn mssql__*</code> taking a JSON string and returning a JSON string. The <code>lib/Mssql.stk</code> wrapper builds the request hash, calls the symbol, and decodes the reply &mdash; an <code>{ error }</code> payload becomes a <code>Mssql::&lt;fn&gt;: &lt;reason&gt;</code> exception. On first <code>use Mssql</code>, stryke dlopens the cdylib and registers the symbols declared in <code>stryke.toml</code>'s <code>[ffi].exports</code> via <code>rust_ffi::load_cdylib</code>; only declared symbols resolve.</p>
+
+      <hr class="section-rule">
+      <h2 class="tutorial-title"><span class="step-hash">=</span>PURE HELPERS (UNIT-TESTED)</h2>
+      <p>The SQL- and URL-shaping helpers take no connection and are exercised by the in-crate test suite, so the injection-safety logic runs without a database.</p>
+      <table class="arch-table">
+        <thead><tr><th>Helper</th><th>Behavior</th></tr></thead>
+        <tbody>
+          <tr><td><code>quote_ident</code></td><td><code>name</code> → <code>[name]</code>, doubling any <code>]</code>. Schema-qualified names quote each dot segment.</td></tr>
+          <tr><td><code>quote_literal</code></td><td><code>v</code> → <code>'v'</code>, doubling any <code>'</code>.</td></tr>
+          <tr><td><code>valid_identifier</code></td><td>True for <code>[A-Za-z_][A-Za-z0-9_]*</code>.</td></tr>
+          <tr><td><code>escape_like</code></td><td><code>%</code>/<code>_</code>/<code>[</code> → <code>[%]</code>/<code>[_]</code>/<code>[[]</code> classes (no <code>ESCAPE</code> clause).</td></tr>
+          <tr><td><code>format_value</code></td><td>string→<code>'…'</code>, number→as-is, bool→<code>1</code>/<code>0</code>, null→<code>NULL</code>; arrays/objects error.</td></tr>
+          <tr><td><code>format_in_list</code></td><td>scalars → <code>(a, b, …)</code>; empty → <code>(NULL)</code>.</td></tr>
+          <tr><td><code>split_batch</code></td><td>Splits on lines that are only <code>GO</code> (case-insensitive); drops empties.</td></tr>
+          <tr><td><code>parse_url</code> / <code>redact_url</code> / <code>build_url</code></td><td>ADO string ↔ map; <code>password</code>/<code>pwd</code> redacted to <code>***</code>.</td></tr>
         </tbody>
       </table>
 
@@ -138,6 +180,7 @@
       <table class="arch-table">
         <thead><tr><th>Item</th><th>Value</th></tr></thead>
         <tbody>
+          <tr><td>Version</td><td>0.7.0</td></tr>
           <tr><td>License</td><td>MIT</td></tr>
           <tr><td>Repository</td><td><a href="https://github.com/MenkeTechnologies/stryke-mssql" target="_blank" rel="noopener noreferrer">github.com/MenkeTechnologies/stryke-mssql</a></td></tr>
           <tr><td>Parent language</td><td><a href="https://github.com/MenkeTechnologies/strykelang" target="_blank" rel="noopener noreferrer">strykelang</a></td></tr>
