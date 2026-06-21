@@ -152,6 +152,72 @@ fn Mssql::columns ($table, %opts) {
     @{ Mssql::_decode("columns", mssql__columns(to_json($r)))->{rows} }
 }
 
+## The database the connection is currently using (`SELECT DB_NAME()`).
+fn Mssql::current_database (%opts) {
+    val $r = Mssql::_req({}, \%opts)
+    Mssql::_decode("current_database", mssql__current_database(to_json($r)))->{value}
+}
+
+## True when $table exists (`INFORMATION_SCHEMA.TABLES`). A schema-qualified name
+## (`dbo.users`) is matched on both schema and name; an unqualified name matches
+## in any schema.
+fn Mssql::table_exists ($table, %opts) {
+    val $r = Mssql::_req({ table => $table }, \%opts)
+    Mssql::_decode("table_exists", mssql__table_exists(to_json($r)))->{value}
+}
+
+## Row count of $table (`SELECT COUNT(*)`). Optional $where is caller-owned T-SQL
+## (use `@P1`… with %opts{params}); pass undef for the whole table.
+fn Mssql::count ($table, $where = undef, %opts) {
+    var %extra = (table => $table)
+    $extra{where}  = $where           if defined $where
+    $extra{params} = $opts{params}    if exists $opts{params}
+    val $r = Mssql::_req(\%extra, \%opts)
+    Mssql::_decode("count", mssql__count(to_json($r)))->{value}
+}
+
+## Primary-key columns of $table in key order (`{ COLUMN_NAME, ORDINAL_POSITION }`
+## rows).
+fn Mssql::primary_keys ($table, %opts) {
+    val $r = Mssql::_req({ table => $table }, \%opts)
+    @{ Mssql::_decode("primary_keys", mssql__primary_keys(to_json($r)))->{rows} }
+}
+
+## Foreign-key relationships declared on $table (`sys.foreign_keys`). Rows give
+## the constraint name, source column, and referenced table/column.
+fn Mssql::foreign_keys ($table, %opts) {
+    val $r = Mssql::_req({ table => $table }, \%opts)
+    @{ Mssql::_decode("foreign_keys", mssql__foreign_keys(to_json($r)))->{rows} }
+}
+
+## Indexes on $table (`sys.indexes`). Rows give index name, uniqueness, whether
+## it backs the primary key, and the type description.
+fn Mssql::indexes ($table, %opts) {
+    val $r = Mssql::_req({ table => $table }, \%opts)
+    @{ Mssql::_decode("indexes", mssql__indexes(to_json($r)))->{rows} }
+}
+
+## User views (`INFORMATION_SCHEMA.VIEWS`). Rows of `{ TABLE_SCHEMA, TABLE_NAME }`.
+fn Mssql::views (%opts) {
+    val $r = Mssql::_req({}, \%opts)
+    @{ Mssql::_decode("views", mssql__views(to_json($r)))->{rows} }
+}
+
+## User schemas (`sys.schemas`, built-in role/system schemas excluded). Rows of
+## `{ name }`.
+fn Mssql::schemas (%opts) {
+    val $r = Mssql::_req({}, \%opts)
+    @{ Mssql::_decode("schemas", mssql__schemas(to_json($r)))->{rows} }
+}
+
+## Fast row-count estimate of $table from `sys.dm_db_partition_stats` — the
+## engine-maintained count for the heap/clustered index. Cheaper than `count` on
+## large tables, but an estimate.
+fn Mssql::row_count ($table, %opts) {
+    val $r = Mssql::_req({ table => $table }, \%opts)
+    Mssql::_decode("row_count", mssql__row_count(to_json($r)))->{value}
+}
+
 # ── pure URL helpers ──────────────────────────────────────────────────
 
 ## Parse an ADO connection string into a hashref (password redacted).

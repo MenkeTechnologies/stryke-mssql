@@ -51,6 +51,27 @@ if (defined $ENV{MSSQL_HOST}) {
         )
         assert_eq Mssql::scalar("SELECT COUNT(*) FROM $tbl", %conn), 2, "batch committed both statements"
 
+        # 6. introspection helpers
+        assert_ok Mssql::current_database(%conn), "current_database returns a name"
+        assert_ok Mssql::table_exists($tbl, %conn), "table_exists true for created table"
+        assert_eq Mssql::table_exists("no_such_table_$$", %conn), 0, "table_exists false for missing table"
+        assert_eq Mssql::count($tbl, %conn), 2, "count whole table"
+        assert_eq Mssql::count($tbl, "id = @P1", params => [1], %conn), 1, "count with where + params"
+
+        val @pks = Mssql::primary_keys($tbl, %conn)
+        assert_eq len(@pks), 1, "primary_keys returns the single PK column"
+        assert_eq $pks[0]{COLUMN_NAME}, "id", "primary_keys names the id column"
+
+        val @idx = Mssql::indexes($tbl, %conn)
+        assert_ok len(@idx) >= 1, "indexes lists at least the PK index"
+
+        # row_count is engine-maintained; assert it is a non-negative integer
+        assert_ok Mssql::row_count($tbl, %conn) >= 0, "row_count returns a count"
+
+        # schemas/views are catalog-wide; assert dbo schema is present
+        val @schemas = Mssql::schemas(%conn)
+        assert_ok scalar(grep { $_->{name} eq "dbo" } @schemas), "schemas includes dbo"
+
         # cleanup
         Mssql::execute("DROP TABLE $tbl", %conn)
     }

@@ -605,6 +605,225 @@ pub extern "C" fn mssql__columns(args: *const c_char) -> *const c_char {
     })
 }
 
+/// `SELECT DB_NAME()` — the database the cached connection is currently using.
+#[no_mangle]
+pub extern "C" fn mssql__current_database(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let rows = with_client(&v, |c| async move {
+            run_query(&c, "SELECT DB_NAME() AS name", &[]).await
+        })?;
+        Ok(json!({ "value": rows.first().and_then(|r| r.get("name")).cloned() }))
+    })
+}
+
+/// True when `table` exists. The (possibly schema-qualified) name is matched
+/// against `INFORMATION_SCHEMA.TABLES`; an unqualified name matches in any schema.
+#[no_mangle]
+pub extern "C" fn mssql__table_exists(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let table = v["table"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing table"))?;
+        let (schema, name) = split_qualified(table);
+        let (sql, params) = match schema {
+            Some(s) => (
+                "SELECT 1 FROM INFORMATION_SCHEMA.TABLES \
+                 WHERE TABLE_SCHEMA = @P1 AND TABLE_NAME = @P2",
+                vec![Value::String(s), Value::String(name)],
+            ),
+            None => (
+                "SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = @P1",
+                vec![Value::String(name)],
+            ),
+        };
+        let rows = with_client(&v, |c| async move { run_query(&c, sql, &params).await })?;
+        Ok(json!({ "value": !rows.is_empty() }))
+    })
+}
+
+/// `SELECT COUNT(*) FROM <table> [WHERE <where>]` — row count as an integer.
+/// `table` is bracket-quoted; the optional `where` clause is caller-owned T-SQL
+/// (use `@P1`… with `params` for values).
+#[no_mangle]
+pub extern "C" fn mssql__count(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let table = v["table"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing table"))?;
+        let mut sql = format!("SELECT COUNT(*) AS n FROM {}", quote_qualified(table));
+        if let Some(w) = v.get("where").and_then(|x| x.as_str()) {
+            if !w.trim().is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(w);
+            }
+        }
+        let params = params_of(&v);
+        let rows = with_client(&v, |c| async move { run_query(&c, &sql, &params).await })?;
+        let n = rows
+            .first()
+            .and_then(|r| r.get("n"))
+            .and_then(|x| x.as_i64())
+            .unwrap_or(0);
+        Ok(json!({ "value": n }))
+    })
+}
+
+/// Primary-key columns of `table` in key order, via the
+/// `KEY_COLUMN_USAGE` / `TABLE_CONSTRAINTS` join. Rows of `{ COLUMN_NAME }`.
+#[no_mangle]
+pub extern "C" fn mssql__primary_keys(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let table = v["table"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing table"))?
+            .to_string();
+        let params = vec![Value::String(table)];
+        let rows = with_client(&v, |c| async move {
+            run_query(
+                &c,
+                "SELECT kcu.COLUMN_NAME, kcu.ORDINAL_POSITION \
+                 FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc \
+                 JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu \
+                   ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME \
+                  AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA \
+                 WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' AND tc.TABLE_NAME = @P1 \
+                 ORDER BY kcu.ORDINAL_POSITION",
+                &params,
+            )
+            .await
+        })?;
+        Ok(json!({ "rows": rows }))
+    })
+}
+
+/// Foreign-key relationships declared on `table`, via `sys.foreign_keys`. Each
+/// row gives the constraint, source column, and referenced table/column.
+#[no_mangle]
+pub extern "C" fn mssql__foreign_keys(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let table = v["table"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing table"))?
+            .to_string();
+        let params = vec![Value::String(table)];
+        let rows = with_client(&v, |c| async move {
+            run_query(
+                &c,
+                "SELECT fk.name AS constraint_name, \
+                        OBJECT_NAME(fkc.parent_object_id) AS table_name, \
+                        cpar.name AS column_name, \
+                        OBJECT_NAME(fkc.referenced_object_id) AS referenced_table, \
+                        cref.name AS referenced_column \
+                 FROM sys.foreign_keys fk \
+                 JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id \
+                 JOIN sys.columns cpar ON fkc.parent_object_id = cpar.object_id \
+                   AND fkc.parent_column_id = cpar.column_id \
+                 JOIN sys.columns cref ON fkc.referenced_object_id = cref.object_id \
+                   AND fkc.referenced_column_id = cref.column_id \
+                 WHERE OBJECT_NAME(fkc.parent_object_id) = @P1 \
+                 ORDER BY fk.name, fkc.constraint_column_id",
+                &params,
+            )
+            .await
+        })?;
+        Ok(json!({ "rows": rows }))
+    })
+}
+
+/// Indexes on `table`, via `sys.indexes`. Each row gives the index name, whether
+/// it is unique, and its type description (CLUSTERED / NONCLUSTERED / …). The
+/// implicit heap (no index) is excluded.
+#[no_mangle]
+pub extern "C" fn mssql__indexes(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let table = v["table"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing table"))?
+            .to_string();
+        let params = vec![Value::String(table)];
+        let rows = with_client(&v, |c| async move {
+            run_query(
+                &c,
+                "SELECT i.name AS index_name, i.is_unique, i.is_primary_key, \
+                        i.type_desc \
+                 FROM sys.indexes i \
+                 JOIN sys.objects o ON i.object_id = o.object_id \
+                 WHERE o.name = @P1 AND i.type > 0 \
+                 ORDER BY i.name",
+                &params,
+            )
+            .await
+        })?;
+        Ok(json!({ "rows": rows }))
+    })
+}
+
+/// User views, via `INFORMATION_SCHEMA.VIEWS`. Rows of
+/// `{ TABLE_SCHEMA, TABLE_NAME }`.
+#[no_mangle]
+pub extern "C" fn mssql__views(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let rows = with_client(&v, |c| async move {
+            run_query(
+                &c,
+                "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS \
+                 ORDER BY TABLE_SCHEMA, TABLE_NAME",
+                &[],
+            )
+            .await
+        })?;
+        Ok(json!({ "rows": rows }))
+    })
+}
+
+/// Schemas, via `sys.schemas` (excluding the built-in system/role schemas). Rows
+/// of `{ name }`.
+#[no_mangle]
+pub extern "C" fn mssql__schemas(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let rows = with_client(&v, |c| async move {
+            run_query(
+                &c,
+                "SELECT name FROM sys.schemas \
+                 WHERE name NOT IN ('sys','INFORMATION_SCHEMA','guest','db_owner', \
+                   'db_accessadmin','db_securityadmin','db_ddladmin','db_backupoperator', \
+                   'db_datareader','db_datawriter','db_denydatareader','db_denydatawriter') \
+                 ORDER BY name",
+                &[],
+            )
+            .await
+        })?;
+        Ok(json!({ "rows": rows }))
+    })
+}
+
+/// Fast row-count estimate from `sys.dm_db_partition_stats` — the engine's
+/// maintained `row_count` for the table's heap/clustered index (index_id 0 or 1),
+/// summed across partitions. Cheaper than `COUNT(*)` on large tables, but an
+/// estimate (may lag by a few rows under heavy concurrent writes).
+#[no_mangle]
+pub extern "C" fn mssql__row_count(args: *const c_char) -> *const c_char {
+    ffi_call(args, |v| {
+        let table = v["table"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing table"))?;
+        let object = quote_qualified(table);
+        let sql = format!(
+            "SELECT SUM(ps.row_count) AS n \
+             FROM sys.dm_db_partition_stats ps \
+             WHERE ps.object_id = OBJECT_ID('{}') AND ps.index_id IN (0, 1)",
+            object.replace('\'', "''")
+        );
+        let rows = with_client(&v, |c| async move { run_query(&c, &sql, &[]).await })?;
+        let n = rows
+            .first()
+            .and_then(|r| r.get("n"))
+            .and_then(|x| x.as_i64())
+            .unwrap_or(0);
+        Ok(json!({ "value": n }))
+    })
+}
+
 // ── pure URL helpers ────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -821,6 +1040,17 @@ fn quote_qualified(name: &str) -> String {
         .join(".")
 }
 
+/// Split a possibly schema-qualified name into `(schema, name)`. `dbo.users` →
+/// `(Some("dbo"), "users")`; an unqualified `users` → `(None, "users")`. Only the
+/// last dot separates schema from object (extra leading segments, e.g. a db
+/// prefix, fold into the schema part).
+fn split_qualified(name: &str) -> (Option<String>, String) {
+    match name.rsplit_once('.') {
+        Some((schema, obj)) => (Some(schema.to_string()), obj.to_string()),
+        None => (None, name.to_string()),
+    }
+}
+
 /// Build a multi-row `INSERT INTO <table> (cols) VALUES (...),(...)`. Columns are
 /// the (sorted) keys of the first row; each row's values are emitted in that
 /// column order (a missing key → `NULL`) as T-SQL literals via `format_value`.
@@ -999,6 +1229,19 @@ mod tests {
     fn quote_qualified_quotes_each_segment() {
         assert_eq!(quote_qualified("users"), "[users]");
         assert_eq!(quote_qualified("dbo.users"), "[dbo].[users]");
+    }
+
+    #[test]
+    fn split_qualified_separates_on_last_dot() {
+        assert_eq!(split_qualified("users"), (None, "users".to_string()));
+        assert_eq!(
+            split_qualified("dbo.users"),
+            (Some("dbo".to_string()), "users".to_string())
+        );
+        assert_eq!(
+            split_qualified("app.dbo.users"),
+            (Some("app.dbo".to_string()), "users".to_string())
+        );
     }
 
     #[test]
