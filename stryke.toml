@@ -38,6 +38,15 @@ exports = [
     "mssql__format_in_list",
     "mssql__valid_identifier",
     "mssql__split_batch",
+    "mssql__count",
+    "mssql__current_database",
+    "mssql__foreign_keys",
+    "mssql__indexes",
+    "mssql__primary_keys",
+    "mssql__row_count",
+    "mssql__schemas",
+    "mssql__table_exists",
+    "mssql__views",
 ]
 
 [scripts]
