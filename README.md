@@ -23,6 +23,8 @@ driver). Opt-in package tier.
 
 ### [`strykelang`](https://github.com/MenkeTechnologies/strykelang) &middot; [`MenkeTechnologiesMeta`](https://github.com/MenkeTechnologies/MenkeTechnologiesMeta) · [`stryke-postgres`](https://github.com/MenkeTechnologies/stryke-postgres) · [`stryke-mysql`](https://github.com/MenkeTechnologies/stryke-mysql)
 
+### [`Read the Docs`](https://menketechnologies.github.io/stryke-mssql/) &middot; [`Engineering Report`](https://menketechnologies.github.io/stryke-mssql/report.html)
+
 ---
 
 ## Table of Contents
