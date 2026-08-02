@@ -8,8 +8,8 @@ help:
 	  'targets:' \
 	  '  make release   - cargo build --release' \
 	  '  make debug     - cargo build' \
-	  '  make test      - cargo test then `s test t/`  (needs $$MSSQL_URL or local 127.0.0.1:587)' \
-	  '  make install   - `s pkg install -g .` (cdylib lands in ~/.stryke/store/search@<ver>/)' \
+	  '  make test      - cargo test then `s test t/`  (live path needs $$MSSQL_HOST; default 127.0.0.1:1433)' \
+	  '  make install   - `s pkg install -g .` (cdylib lands in ~/.stryke/store/mssql@<ver>/)' \
 	  '  make clean     - cargo clean'
 
 release:
