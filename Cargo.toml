@@ -18,7 +18,7 @@ path = "src/lib.rs"
 # tiberius is the pure-Rust TDS / SQL Server driver. It is async, so the cdylib
 # embeds a tokio runtime and presents a blocking facade — matching the sync
 # connection-cache model the other stryke data packages use.
-tiberius = { version = "0.12", default-features = false, features = [
+tiberius = { version = "0.13", default-features = false, features = [
     "tds73",
     "rustls",
     "chrono",
