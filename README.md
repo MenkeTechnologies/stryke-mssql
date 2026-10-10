@@ -111,7 +111,7 @@ connection that errors is evicted and reopened on the next call.
   and `block_on`s each call, matching the sync model the other stryke data
   packages use.
 - **Typed rows** — each cell is converted to JSON by trying the TDS types in
-  order (int/float/bool/string/decimal/uuid/datetime/binary), so arbitrary
+  order (bool/int/float/string/decimal/uuid/datetime/date/time/binary), so arbitrary
   result sets round-trip without a per-query schema. Decimals preserve precision
   as strings; binary is base64; datetimes are ISO-8601.
 - **Pure helpers** — the ADO parse/redact helpers take no connection and are
